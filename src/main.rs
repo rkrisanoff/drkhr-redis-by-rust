@@ -1,111 +1,77 @@
-// Uncomment this block to pass the first stage
-use std::{
-    io::{Read, Write},
+use std::str;
+
+use tokio::{
+    io,
     net::TcpListener,
-    str::FromStr,
 };
 
-#[derive(Debug, PartialEq)]
-enum RespDataType {
-    String,
-    Error,
-    Integer,
-    BulkStrings,
-    Array,
-    Null,
-    Boolean,
-    Double,
-    BigNumber,
-    BulkError,
-    Verbatium,
-    Map,
-    Set,
-    Push,
-}
+pub mod resp;
+use resp::{form_response, DataType};
 
-impl FromStr for RespDataType {
-    type Err = ();
-
-    fn from_str(input: &str) -> Result<RespDataType, Self::Err> {
-        match input {
-            "+" => Ok(RespDataType::String),
-            "-" => Ok(RespDataType::Error),
-            ":" => Ok(RespDataType::Integer),
-            "$" => Ok(RespDataType::BulkStrings),
-            "*" => Ok(RespDataType::Array),
-            "_" => Ok(RespDataType::Null),
-            "#" => Ok(RespDataType::Boolean),
-            "," => Ok(RespDataType::Double),
-            "(" => Ok(RespDataType::BigNumber),
-            "!" => Ok(RespDataType::BulkError),
-            "=" => Ok(RespDataType::Verbatium),
-            "%" => Ok(RespDataType::Map),
-            "~" => Ok(RespDataType::Set),
-            ">" => Ok(RespDataType::Push),
-
-            _ => Err(()),
-        }
-    }
-}
-
-impl From<RespDataType> for String {
-    fn from(value: RespDataType) -> Self {
-        match value {
-            RespDataType::String => String::from("+"),
-            RespDataType::Error => String::from("-"),
-            RespDataType::Integer => String::from(":"),
-            RespDataType::BulkStrings => String::from("$"),
-            RespDataType::Array => String::from("*"),
-            RespDataType::Null => String::from("_"),
-            RespDataType::Boolean => String::from("#"),
-            RespDataType::Double => String::from(","),
-            RespDataType::BigNumber => String::from("("),
-            RespDataType::BulkError => String::from("!"),
-            RespDataType::Verbatium => String::from("="),
-            RespDataType::Map => String::from("%"),
-            RespDataType::Set => String::from("~"),
-            RespDataType::Push => String::from("~"),
-        }
-    }
-}
-const TERM_CHAR: &str = "\r\n";
-
-fn build_response<'a>(response: &'a str) -> String {
-    String::from(RespDataType::String) + response + TERM_CHAR
-}
-
-fn main() {
+#[tokio::main]
+async fn main() {
     println!("Logs from your program will appear here!");
 
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
+    const HOST: &str = "127.0.0.1";
+    const PORT: &str = "6379";
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(mut stream) => {
-                println!("accepted new connection");
-                let mut input_buffer: [u8; 64] = [0; 64];
-                let req_read_res = stream.read(&mut input_buffer);
+    let listener = TcpListener::bind(String::new() + HOST + ":" + PORT)
+        .await
+        .unwrap();
 
-                if let Ok(buffer_size) = req_read_res {
-                    let request = String::from_utf8_lossy(&input_buffer[..buffer_size]);
-                    println!("Input buffer size is {}", buffer_size);
-                    println!("Input buffer: `{:?}`", request.as_ref().to_string());
+    loop {
+        let (socket, _) = listener.accept().await.unwrap();
+        let _handle = tokio::spawn(async move {
+            let mut input_buffer: [u8; 512] = [0; 512];
 
-                    let res_write_result = stream.write(build_response("PONG").as_bytes());
-
-                    match res_write_result {
+            'read_process: loop {
+                match socket.readable().await {
+                    Ok(_) => match socket.try_read(&mut input_buffer) {
+                        Ok(0) => break 'read_process,
                         Ok(size) => {
-                            println!("Sent {} bytes", size);
+                            let request_decode_result = str::from_utf8(&input_buffer[..size]);
+                            match request_decode_result {
+                                Ok(request) => {
+                                    println!("read {} bytes", size);
+                                    println!("read `{:?}` message", request);
+                                    if (&input_buffer[..size])
+                                        .iter()
+                                        .eq("exit\n".as_bytes().iter())
+                                    {
+                                        break 'read_process;
+                                    }
+                                    if (&input_buffer[..size])
+                                        .iter()
+                                        .eq("exit_complete\n".as_bytes().iter())
+                                    {
+                                        return ();
+                                    }
+
+                                    match socket.writable().await {
+                                        Ok(_) => {
+                                            match socket.try_write(
+                                                form_response(DataType::String, "PONG").as_bytes(),
+                                            ) {
+                                                Ok(_) => {}
+                                                Err(_) => {}
+                                            }
+                                        }
+                                        Err(_) => {}
+                                    }
+                                }
+                                Err(_) => {}
+                            }
                         }
-                        Err(err) => {
-                            println!("error with response sending: {}", err);
+                        Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            continue;
                         }
-                    }
-                }
+                        Err(e) => {
+                            println!("{}", e);
+                        }
+                    },
+                    Err(_) => {}
+                };
             }
-            Err(e) => {
-                println!("error: {}", e);
-            }
-        }
+        });
     }
 }
