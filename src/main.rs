@@ -1,24 +1,21 @@
 use std::str;
 
-use tokio::{
-    io,
-    net::TcpListener,
-};
+use tokio::{io, net::TcpListener};
 
 pub mod resp;
-use resp::{form_response, DataType};
+// use resp::{form_response, DataType};
+use log;
 
 #[tokio::main]
 async fn main() {
-    println!("Logs from your program will appear here!");
+    log::info!("Logs from your program will appear here!");
 
     const HOST: &str = "127.0.0.1";
     const PORT: &str = "6379";
 
-    let listener = TcpListener::bind(String::new() + HOST + ":" + PORT)
+    let listener = TcpListener::bind(format!("{}:{}", HOST, PORT))
         .await
         .unwrap();
-
     loop {
         let (socket, _) = listener.accept().await.unwrap();
         let _handle = tokio::spawn(async move {
@@ -27,30 +24,34 @@ async fn main() {
             'read_process: loop {
                 match socket.readable().await {
                     Ok(_) => match socket.try_read(&mut input_buffer) {
-                        Ok(0) => break 'read_process,
+                        Ok(0) => {
+                            log::error!(
+                                "Received void message!
+                            It is impossible!"
+                            );
+                            break 'read_process;
+                        }
                         Ok(size) => {
                             let request_decode_result = str::from_utf8(&input_buffer[..size]);
                             match request_decode_result {
                                 Ok(request) => {
-                                    println!("read {} bytes", size);
-                                    println!("read `{:?}` message", request);
-                                    if (&input_buffer[..size])
-                                        .iter()
-                                        .eq("exit\n".as_bytes().iter())
-                                    {
-                                        break 'read_process;
+                                    log::debug!("read {} bytes", size);
+                                    log::debug!("read `{:?}` message", request);
+                                    fn check_message_equals(
+                                        origin: &[u8],
+                                        size: usize,
+                                        bench: &str,
+                                    ) -> bool {
+                                        (origin[..size]).iter().eq(bench.as_bytes().iter())
                                     }
-                                    if (&input_buffer[..size])
-                                        .iter()
-                                        .eq("exit_complete\n".as_bytes().iter())
-                                    {
-                                        return ();
+                                    if check_message_equals(&input_buffer, size, "exit\n") {
+                                        break 'read_process;
                                     }
 
                                     match socket.writable().await {
                                         Ok(_) => {
                                             match socket.try_write(
-                                                form_response(DataType::String, "PONG").as_bytes(),
+                                                "".as_bytes(), // form_response(DataType::SimpleString, "PONG").as_bytes(),
                                             ) {
                                                 Ok(_) => {}
                                                 Err(_) => {}
