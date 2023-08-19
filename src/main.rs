@@ -1,10 +1,11 @@
+use log;
 use std::str;
 
 use tokio::{io, net::TcpListener};
 
+pub mod command;
 pub mod resp;
-// use resp::{form_response, DataType};
-use log;
+// pub mod command;
 
 #[tokio::main]
 async fn main() {
@@ -26,8 +27,8 @@ async fn main() {
                     Ok(_) => match socket.try_read(&mut input_buffer) {
                         Ok(0) => {
                             log::error!(
-                                "Received void message!
-                            It is impossible!"
+                                "Received void message!\n
+                                 It is impossible!"
                             );
                             break 'read_process;
                         }
@@ -37,22 +38,14 @@ async fn main() {
                                 Ok(request) => {
                                     log::debug!("read {} bytes", size);
                                     log::debug!("read `{:?}` message", request);
-                                    fn check_message_equals(
-                                        origin: &[u8],
-                                        size: usize,
-                                        bench: &str,
-                                    ) -> bool {
-                                        (origin[..size]).iter().eq(bench.as_bytes().iter())
-                                    }
-                                    if check_message_equals(&input_buffer, size, "exit\n") {
-                                        break 'read_process;
-                                    }
+
+                                    let response: resp::Message = command::process_request(request);
 
                                     match socket.writable().await {
                                         Ok(_) => {
-                                            match socket.try_write(
-                                                "".as_bytes(), // form_response(DataType::SimpleString, "PONG").as_bytes(),
-                                            ) {
+                                            match socket
+                                                .try_write(String::from(&response).as_bytes())
+                                            {
                                                 Ok(_) => {}
                                                 Err(_) => {}
                                             }
