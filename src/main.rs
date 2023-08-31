@@ -1,7 +1,8 @@
 use log;
-use std::str;
+use std::sync::Arc;
+use std::{collections::HashMap, str};
 
-use tokio::{io, net::TcpListener};
+use tokio::{io, net::TcpListener, sync::Mutex};
 
 pub mod command;
 pub mod resp;
@@ -13,15 +14,18 @@ async fn main() {
 
     const HOST: &str = "127.0.0.1";
     const PORT: &str = "6379";
+    let redis_storage: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
     let listener = TcpListener::bind(format!("{}:{}", HOST, PORT))
         .await
         .unwrap();
     loop {
         let (socket, _) = listener.accept().await.unwrap();
+        let redis_storage = redis_storage.clone();
+
         let _handle = tokio::spawn(async move {
             let mut input_buffer: [u8; 512] = [0; 512];
-
+            
             'read_process: loop {
                 match socket.readable().await {
                     Ok(_) => match socket.try_read(&mut input_buffer) {
@@ -33,13 +37,16 @@ async fn main() {
                             break 'read_process;
                         }
                         Ok(size) => {
+                            let mut redis_storage = redis_storage.lock().await;
+
                             let request_decode_result = str::from_utf8(&input_buffer[..size]);
                             match request_decode_result {
                                 Ok(request) => {
                                     log::debug!("read {} bytes", size);
                                     log::debug!("read `{:?}` message", request);
 
-                                    let response: resp::Message = command::process_request(request);
+                                    let response: resp::Message =
+                                        command::process_request(request, &mut redis_storage);
 
                                     match socket.writable().await {
                                         Ok(_) => {
@@ -50,10 +57,14 @@ async fn main() {
                                                 Err(_) => {}
                                             }
                                         }
-                                        Err(_) => {}
+                                        Err(_) => {
+                                            println!("match socket.writable().await {{");
+                                        }
                                     }
                                 }
-                                Err(_) => {}
+                                Err(_) => {
+                                    println!("Ok(request) => {{");
+                                }
                             }
                         }
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
